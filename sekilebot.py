@@ -231,13 +231,6 @@ async def handle_message(message: Message):
         await message.answer(f"❌ Ошибка: {str(e)[:100]}")
         await wait_msg.delete()
 
-# Запуск бота
-async def main():
-    logger.info("🚀 Бот запускается...")
-    await bot.delete_webhook(drop_pending_updates=True)
-    await asyncio.sleep(1)
-    await dp.start_polling(bot, skip_updates=True)
-
 # HTTP сервер для Render
 class HealthCheckHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
@@ -262,8 +255,14 @@ def run_health_server():
 # Запускаем HTTP сервер в отдельном потоке
 threading.Thread(target=run_health_server, daemon=True).start()
 
+# === ИСПРАВЛЕННЫЙ ЗАПУСК БОТА ===
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.info("Бот остановлен")
+    from aiogram import executor
+    
+    # Сбрасываем вебхуки перед запуском
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(bot.delete_webhook(drop_pending_updates=True))
+    
+    logger.info("🚀 Бот запускается...")
+    executor.start_polling(dp, skip_updates=True)
