@@ -1,2 +1,6 @@
-# La-Sekil-
-La Sekilé music bot
+Telegram бот для скачивания музыки с YouTube и Spotify
+
+## Команды
+- Отправь ссылку на YouTube видео
+- Отправь ссылку на Spotify трек
+- Отправь название песни (поиск по YouTube)
