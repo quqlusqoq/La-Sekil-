@@ -20,10 +20,13 @@ from http import HTTPStatus
 
 # Настройка логирования
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# Включаем логирование yt-dlp
+logging.getLogger('yt_dlp').setLevel(logging.DEBUG)
 
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -92,30 +95,29 @@ def get_spotify_track_info(url: str) -> dict | None:
 def get_file_size(file_path: str) -> int:
     return os.path.getsize(file_path)
 
-# УЛУЧШЕННАЯ ФУНКЦИЯ СКАЧИВАНИЯ
+# ОСНОВНАЯ ФУНКЦИЯ СКАЧИВАНИЯ
 def download_audio(url: str) -> str | None:
     """Скачивает аудио с YouTube или ищет трек по названию из Spotify"""
     
+    logger.info(f"🎯 Начинаем обработку URL: {url}")
     timestamp = int(time.time())
     output_template = str(DOWNLOAD_DIR / f"audio_{timestamp}_%(title)s.%(ext)s")
     
-    # РАБОЧИЕ НАСТРОЙКИ ДЛЯ YT-DLP
+    # Пробуем разные форматы для обхода блокировок
     ydl_opts = {
-        # Формат: пробуем разные варианты
         'format': 'bestaudio[ext=m4a]/bestaudio/best',
         'outtmpl': output_template,
         'noplaylist': True,
-        'quiet': True,
-        'no_warnings': True,
+        'quiet': False,
+        'no_warnings': False,
+        'verbose': True,
         
-        # Конвертация в mp3
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
             'preferredquality': '128',
         }],
         
-        # Важные заголовки как у браузера
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -128,16 +130,17 @@ def download_audio(url: str) -> str | None:
         'geo_bypass': True,
         'geo_bypass_country': 'US',
         
-        # Специально для YouTube
+        # Пробуем разные клиенты YouTube
         'extractor_args': {
             'youtube': {
-                'player_client': ['android', 'web']
+                'player_client': ['android', 'web', 'tv_simply']
             }
         },
     }
 
     # Обработка Spotify
     if "spotify.com" in url:
+        logger.info("🔍 Обнаружена Spotify ссылка")
         track_info = get_spotify_track_info(url)
         if not track_info:
             logger.error("❌ Не удалось получить информацию из Spotify")
@@ -149,83 +152,56 @@ def download_audio(url: str) -> str | None:
     
     # Обработка плейлистов YouTube
     elif "list=" in url:
-        logger.warning("📋 Обнаружен плейлист YouTube, скачиваю только первый трек")
+        logger.warning("📋 Обнаружен плейлист YouTube")
         video_id_match = re.search(r'(?:v=|/)([0-9A-Za-z_-]{11})', url)
         if video_id_match:
             url = f"https://youtube.com/watch?v={video_id_match.group(1)}"
+            logger.info(f"🎬 Извлечено видео ID: {video_id_match.group(1)}")
     
+    # Попытка скачивания
     try:
-        logger.info(f"⏬ Начинаю скачивание: {url}")
+        logger.info(f"⏬ Запускаем yt-dlp для: {url}")
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # Пробуем скачать
             info = ydl.extract_info(url, download=True)
             
-            # Если это поиск, берем первый результат
             if "entries" in info and info['entries']:
+                logger.info(f"📋 Найдено результатов: {len(info['entries'])}")
                 info = info['entries'][0]
-                logger.info(f"✅ Найдено: {info.get('title', 'Unknown')}")
+                logger.info(f"✅ Выбрано видео: {info.get('title', 'Unknown')}")
             
-            # Получаем имя файла
             filename = ydl.prepare_filename(info)
             mp3_filename = str(Path(filename).with_suffix(".mp3"))
+            logger.info(f"📁 Ожидаемый файл: {mp3_filename}")
             
-            # Если файл не найден, ищем по паттерну
             if not os.path.exists(mp3_filename):
+                logger.warning("⚠️ Файл не найден по ожидаемому пути, ищем по паттерну")
                 mp3_files = list(DOWNLOAD_DIR.glob(f"audio_{timestamp}_*.mp3"))
                 if mp3_files:
                     mp3_filename = str(mp3_files[0])
+                    logger.info(f"✅ Найден файл: {mp3_filename}")
                 else:
-                    # Последняя надежда - ищем любой свежий mp3
                     mp3_files = list(DOWNLOAD_DIR.glob("*.mp3"))
                     mp3_files.sort(key=os.path.getmtime, reverse=True)
                     if mp3_files:
                         mp3_filename = str(mp3_files[0])
+                        logger.info(f"✅ Найден свежий файл: {mp3_filename}")
                     else:
                         raise FileNotFoundError("MP3 файл не найден")
             
-            # Проверяем размер
             file_size = get_file_size(mp3_filename)
+            logger.info(f"📊 Размер файла: {file_size / 1024 / 1024:.2f} MB")
+            
             if file_size > MAX_FILE_SIZE:
                 logger.warning(f"⚠️ Файл слишком большой: {file_size / 1024 / 1024:.1f} MB")
                 os.remove(mp3_filename)
                 return "TOO_LARGE"
             
-            logger.info(f"✅ Успешно скачано: {mp3_filename} ({file_size / 1024 / 1024:.1f} MB)")
+            logger.info(f"✅ УСПЕШНО! Файл готов к отправке")
             return mp3_filename
 
     except Exception as e:
-        logger.error(f"❌ Ошибка при скачивании: {e}")
-        
-        # Пробуем альтернативный метод с минимальными опциями
-        try:
-            logger.info("🔄 Пробую альтернативный метод...")
-            minimal_opts = {
-                'format': 'bestaudio',
-                'outtmpl': output_template,
-                'noplaylist': True,
-                'quiet': True,
-                'postprocessors': [{
-                    'key': 'FFmpegExtractAudio',
-                    'preferredcodec': 'mp3',
-                    'preferredquality': '128',
-                }],
-            }
-            
-            with yt_dlp.YoutubeDL(minimal_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-                if "entries" in info and info['entries']:
-                    info = info['entries'][0]
-                
-                filename = ydl.prepare_filename(info)
-                mp3_filename = str(Path(filename).with_suffix(".mp3"))
-                
-                if os.path.exists(mp3_filename):
-                    logger.info(f"✅ Альтернативный метод сработал!")
-                    return mp3_filename
-        except:
-            pass
-        
+        logger.error(f"❌ ОШИБКА при скачивании: {e}", exc_info=True)
         return None
 
 # Стартовая команда
@@ -252,28 +228,31 @@ async def handle_message(message: Message):
         return
     
     wait_msg = await message.answer("⏳ Скачиваю... это может занять до минуты")
+    logger.info(f"📩 ПОЛУЧЕНО СООБЩЕНИЕ: {text}")
     
     try:
         is_url = any(x in text for x in ["youtube.com", "youtu.be", "spotify.com", "http"])
         
         if not is_url:
             search_query = f"ytsearch1:{text}"
-            logger.info(f"Поиск по названию: {text}")
+            logger.info(f"🔍 Поиск по названию: {text}")
             file_path = download_audio(search_query)
         else:
-            logger.info(f"Обработка ссылки: {text}")
+            logger.info(f"🔗 Обработка ссылки: {text}")
             file_path = download_audio(text)
         
         if file_path == "TOO_LARGE":
-            await message.answer("❌ Файл слишком большой (>50 MB). Telegram не позволяет отправлять такие файлы.")
+            await message.answer("❌ Файл слишком большой (>50 MB)")
             await wait_msg.delete()
             return
         
         if not file_path or not os.path.exists(file_path):
+            logger.error("❌ Файл не был создан")
             await message.answer("❌ Не удалось скачать аудио. Попробуй другую ссылку или название.")
             await wait_msg.delete()
             return
         
+        logger.info(f"📤 Отправляем файл пользователю")
         audio = InputFile(file_path)
         await message.answer_audio(
             audio=audio,
@@ -281,17 +260,17 @@ async def handle_message(message: Message):
             performer="🎵 La Sekilé Bot"
         )
         
-        # Удаляем файл после отправки
         try:
             os.remove(file_path)
-            logger.info(f"Файл удален: {file_path}")
+            logger.info(f"🗑️ Файл удален: {file_path}")
         except:
             pass
         
         await wait_msg.delete()
+        logger.info(f"✅ Запрос успешно обработан")
         
     except Exception as e:
-        logger.error(f"Ошибка в обработчике: {e}")
+        logger.error(f"❌ Ошибка в обработчике: {e}", exc_info=True)
         await message.answer(f"❌ Произошла ошибка: {str(e)[:100]}")
         await wait_msg.delete()
 
@@ -319,14 +298,23 @@ def run_health_server():
 # Запускаем HTTP сервер в отдельном потоке
 threading.Thread(target=run_health_server, daemon=True).start()
 
+# Принудительный сброс вебхуков перед запуском
+async def force_reset():
+    try:
+        await bot.delete_webhook(drop_pending_updates=True)
+        logger.info("🔄 Вебхуки сброшены")
+        await asyncio.sleep(1)
+    except Exception as e:
+        logger.error(f"Ошибка при сбросе вебхуков: {e}")
+
 # Запуск бота
 if __name__ == "__main__":
     from aiogram import executor
     
-    # Сбрасываем вебхуки перед запуском
+    # Выполняем сброс
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    loop.run_until_complete(bot.delete_webhook(drop_pending_updates=True))
+    loop.run_until_complete(force_reset())
     
     logger.info("🚀 Бот запускается...")
     executor.start_polling(dp, skip_updates=True)
