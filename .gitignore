@@ -1,0 +1,20 @@
+# Secrets
+.env
+*.txt
+!requirements.txt
+!Dockerfile
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+venv/
+env/
+.env/
+
+# Logs
+*.log
+
+# Temp files
+/tmp/*
