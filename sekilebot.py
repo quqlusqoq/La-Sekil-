@@ -21,7 +21,7 @@ from http import HTTPStatus
 # Настройка логирования
 logging.basicConfig(
     level=logging.DEBUG,
-    format='%(astime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
