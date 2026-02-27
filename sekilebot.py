@@ -21,7 +21,7 @@ from http import HTTPStatus
 # Настройка логирования
 logging.basicConfig(
     level=logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(astime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
@@ -95,7 +95,7 @@ def get_spotify_track_info(url: str) -> dict | None:
 def get_file_size(file_path: str) -> int:
     return os.path.getsize(file_path)
 
-# ОСНОВНАЯ ФУНКЦИЯ СКАЧИВАНИЯ
+# ОСНОВНАЯ ФУНКЦИЯ СКАЧИВАНИЯ С ПОДДЕРЖКОЙ COOKIES
 def download_audio(url: str) -> str | None:
     """Скачивает аудио с YouTube или ищет трек по названию из Spotify"""
     
@@ -137,6 +137,21 @@ def download_audio(url: str) -> str | None:
             }
         },
     }
+
+    # ПОДДЕРЖКА COOKIES ИЗ ПЕРЕМЕННОЙ ОКРУЖЕНИЯ
+    cookies_content = os.getenv("YOUTUBE_COOKIES")
+    if cookies_content:
+        cookies_file = "/tmp/cookies.txt"
+        try:
+            with open(cookies_file, "w") as f:
+                f.write(cookies_content)
+            ydl_opts['cookiefile'] = cookies_file
+            logger.info("🍪 Cookies загружены из переменной окружения")
+            logger.debug(f"🍪 Размер cookies: {len(cookies_content)} символов")
+        except Exception as e:
+            logger.error(f"❌ Ошибка при сохранении cookies: {e}")
+    else:
+        logger.warning("⚠️ Переменная YOUTUBE_COOKIES не найдена. YouTube может запросить подтверждение.")
 
     # Обработка Spotify
     if "spotify.com" in url:
