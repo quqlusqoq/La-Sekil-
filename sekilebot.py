@@ -92,64 +92,91 @@ def get_spotify_track_info(url: str) -> dict | None:
 def get_file_size(file_path: str) -> int:
     return os.path.getsize(file_path)
 
+# УЛУЧШЕННАЯ ФУНКЦИЯ СКАЧИВАНИЯ
 def download_audio(url: str) -> str | None:
     """Скачивает аудио с YouTube или ищет трек по названию из Spotify"""
     
     timestamp = int(time.time())
     output_template = str(DOWNLOAD_DIR / f"audio_{timestamp}_%(title)s.%(ext)s")
     
-    # Оптимальные настройки для yt-dlp
+    # РАБОЧИЕ НАСТРОЙКИ ДЛЯ YT-DLP
     ydl_opts = {
-        'format': 'bestaudio/best',
+        # Формат: пробуем разные варианты
+        'format': 'bestaudio[ext=m4a]/bestaudio/best',
         'outtmpl': output_template,
         'noplaylist': True,
         'quiet': True,
         'no_warnings': True,
+        
+        # Конвертация в mp3
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'mp3',
             'preferredquality': '128',
         }],
+        
+        # Важные заголовки как у браузера
         'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        }
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-us,en;q=0.5',
+        },
+        
+        # Обход блокировок
+        'ignoreerrors': True,
+        'no_color': True,
+        'geo_bypass': True,
+        'geo_bypass_country': 'US',
+        
+        # Специально для YouTube
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android', 'web']
+            }
+        },
     }
 
     # Обработка Spotify
     if "spotify.com" in url:
         track_info = get_spotify_track_info(url)
         if not track_info:
+            logger.error("❌ Не удалось получить информацию из Spotify")
             return None
         search_query = track_info['search_query']
-        logger.info(f"Ищем на YouTube: {search_query}")
+        logger.info(f"🔍 Ищем на YouTube: {search_query}")
         url = f"ytsearch1:{search_query}"
         ydl_opts['default_search'] = 'ytsearch1'
     
     # Обработка плейлистов YouTube
     elif "list=" in url:
-        logger.warning("Обнаружен плейлист YouTube, скачиваю только первый трек")
+        logger.warning("📋 Обнаружен плейлист YouTube, скачиваю только первый трек")
         video_id_match = re.search(r'(?:v=|/)([0-9A-Za-z_-]{11})', url)
         if video_id_match:
             url = f"https://youtube.com/watch?v={video_id_match.group(1)}"
     
     try:
-        logger.info(f"Начинаю скачивание: {url}")
+        logger.info(f"⏬ Начинаю скачивание: {url}")
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            # Пробуем скачать
             info = ydl.extract_info(url, download=True)
             
+            # Если это поиск, берем первый результат
             if "entries" in info and info['entries']:
                 info = info['entries'][0]
-                logger.info(f"Найдено: {info.get('title', 'Unknown')}")
+                logger.info(f"✅ Найдено: {info.get('title', 'Unknown')}")
             
+            # Получаем имя файла
             filename = ydl.prepare_filename(info)
             mp3_filename = str(Path(filename).with_suffix(".mp3"))
             
+            # Если файл не найден, ищем по паттерну
             if not os.path.exists(mp3_filename):
                 mp3_files = list(DOWNLOAD_DIR.glob(f"audio_{timestamp}_*.mp3"))
                 if mp3_files:
                     mp3_filename = str(mp3_files[0])
                 else:
+                    # Последняя надежда - ищем любой свежий mp3
                     mp3_files = list(DOWNLOAD_DIR.glob("*.mp3"))
                     mp3_files.sort(key=os.path.getmtime, reverse=True)
                     if mp3_files:
@@ -157,17 +184,48 @@ def download_audio(url: str) -> str | None:
                     else:
                         raise FileNotFoundError("MP3 файл не найден")
             
+            # Проверяем размер
             file_size = get_file_size(mp3_filename)
             if file_size > MAX_FILE_SIZE:
-                logger.warning(f"Файл слишком большой: {file_size / 1024 / 1024:.1f} MB")
+                logger.warning(f"⚠️ Файл слишком большой: {file_size / 1024 / 1024:.1f} MB")
                 os.remove(mp3_filename)
                 return "TOO_LARGE"
             
-            logger.info(f"✅ Успешно: {mp3_filename} ({file_size / 1024 / 1024:.1f} MB)")
+            logger.info(f"✅ Успешно скачано: {mp3_filename} ({file_size / 1024 / 1024:.1f} MB)")
             return mp3_filename
 
     except Exception as e:
-        logger.error(f"❌ Ошибка: {e}")
+        logger.error(f"❌ Ошибка при скачивании: {e}")
+        
+        # Пробуем альтернативный метод с минимальными опциями
+        try:
+            logger.info("🔄 Пробую альтернативный метод...")
+            minimal_opts = {
+                'format': 'bestaudio',
+                'outtmpl': output_template,
+                'noplaylist': True,
+                'quiet': True,
+                'postprocessors': [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'mp3',
+                    'preferredquality': '128',
+                }],
+            }
+            
+            with yt_dlp.YoutubeDL(minimal_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                if "entries" in info and info['entries']:
+                    info = info['entries'][0]
+                
+                filename = ydl.prepare_filename(info)
+                mp3_filename = str(Path(filename).with_suffix(".mp3"))
+                
+                if os.path.exists(mp3_filename):
+                    logger.info(f"✅ Альтернативный метод сработал!")
+                    return mp3_filename
+        except:
+            pass
+        
         return None
 
 # Стартовая команда
@@ -193,26 +251,26 @@ async def handle_message(message: Message):
         await message.answer("Отправь ссылку или название песни")
         return
     
-    wait_msg = await message.answer("⏳ Скачиваю... подожди")
+    wait_msg = await message.answer("⏳ Скачиваю... это может занять до минуты")
     
     try:
         is_url = any(x in text for x in ["youtube.com", "youtu.be", "spotify.com", "http"])
         
         if not is_url:
             search_query = f"ytsearch1:{text}"
-            logger.info(f"Поиск: {text}")
+            logger.info(f"Поиск по названию: {text}")
             file_path = download_audio(search_query)
         else:
-            logger.info(f"Ссылка: {text}")
+            logger.info(f"Обработка ссылки: {text}")
             file_path = download_audio(text)
         
         if file_path == "TOO_LARGE":
-            await message.answer("❌ Файл слишком большой (>50 MB)")
+            await message.answer("❌ Файл слишком большой (>50 MB). Telegram не позволяет отправлять такие файлы.")
             await wait_msg.delete()
             return
         
         if not file_path or not os.path.exists(file_path):
-            await message.answer("❌ Не удалось скачать")
+            await message.answer("❌ Не удалось скачать аудио. Попробуй другую ссылку или название.")
             await wait_msg.delete()
             return
         
@@ -220,15 +278,21 @@ async def handle_message(message: Message):
         await message.answer_audio(
             audio=audio,
             title=Path(file_path).stem.replace(f"audio_{int(time.time())}_", ""),
-            performer="🎵 Music Bot"
+            performer="🎵 La Sekilé Bot"
         )
         
-        os.remove(file_path)
+        # Удаляем файл после отправки
+        try:
+            os.remove(file_path)
+            logger.info(f"Файл удален: {file_path}")
+        except:
+            pass
+        
         await wait_msg.delete()
         
     except Exception as e:
-        logger.error(f"Ошибка: {e}")
-        await message.answer(f"❌ Ошибка: {str(e)[:100]}")
+        logger.error(f"Ошибка в обработчике: {e}")
+        await message.answer(f"❌ Произошла ошибка: {str(e)[:100]}")
         await wait_msg.delete()
 
 # HTTP сервер для Render
@@ -255,7 +319,7 @@ def run_health_server():
 # Запускаем HTTP сервер в отдельном потоке
 threading.Thread(target=run_health_server, daemon=True).start()
 
-# === ИСПРАВЛЕННЫЙ ЗАПУСК БОТА ===
+# Запуск бота
 if __name__ == "__main__":
     from aiogram import executor
     
